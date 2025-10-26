@@ -193,7 +193,8 @@ var headerFrame = new Frame(
 var msgBoardTop = headerFrame.y + headerFrame.height + messageMargin;
 var availableMessageRows = yScreenRows - noticeHeight - msgBoardTop;
 var msgBoardHeight = availableMessageRows >= 1 ? availableMessageRows : 1;
-var msgBoardFrame = new Frame(1, msgBoardTop, xScreenColumns, msgBoardHeight, BG_GREEN | LIGHTGREEN, containerFrame);
+var margin = parseInt((console.screen_columns - 80) / 2);
+var msgBoardFrame = new Frame(margin, msgBoardTop, 80, msgBoardHeight, BG_GREEN | LIGHTGREEN, containerFrame);
 var maxNoiseY = yScreenRows - noticeHeight + 1;
 
 mbcode = "LOCAL-NOTICES";
@@ -245,9 +246,9 @@ function readMessage(msgNum) {
 		attr = BG_BLACK | WHITE,
 		parent = containerFrame
 	);
-		var innerWidth = popUpFrame.width - 2;
-		var innerHeight = popUpFrame.height - 4;
-		var rows = parseInt(body.length / innerWidth) + 4;
+	var innerWidth = popUpFrame.width - 2;
+	var innerHeight = popUpFrame.height - 4;
+	var rows = parseInt(body.length / innerWidth) + 4;
 	var innerFrame = new Frame(
 		x = popUpFrame.x + 1,
 		y = popUpFrame.y + 3,
@@ -266,17 +267,17 @@ function readMessage(msgNum) {
 	var minTitleAvailable = 0
 	var title = JSON.parse(JSON.stringify(subject))
 	// TODO: fill in the calculations for this if else block starting on line 264 and ending on line 269
-	if(xTitleAvailable < minTitleAvailable){
+	if (xTitleAvailable < minTitleAvailable) {
 		// trim the string so it fits and adjust xTitleCalc so that string is centered.
 		title = title.substring(0, popUpFrame.width - padding);
 	}
 	xTitleCalc = parseInt(((popUpFrame.width - padding) - title.length) / 2)
-	popUpFrame.drawBorder([RED, YELLOW, GREEN, CYAN, BLUE, MAGENTA], {text:headers.subject, attr: WHITE | BLACK, y: 1, x:xTitleCalc });
+	popUpFrame.drawBorder([RED, YELLOW, GREEN, CYAN, BLUE, MAGENTA], { text: headers.subject, attr: WHITE | BLACK, y: 1, x: xTitleCalc });
 
 	popUpFrame.open();
 	innerFrame.open();
-	popUpFrame.gotoxy(1,3);
-	popUpFrame.center('\1m' + headers.date )
+	popUpFrame.gotoxy(1, 3);
+	popUpFrame.center('\1m' + headers.date)
 	innerFrame.gotoxy(2, 2);
 	innerFrame.centerWrap('\1h\1w' + body);
 	innerFrame.draw();
@@ -316,22 +317,11 @@ for (var m = mb.last_msg; m >= mb.first_msg; m--) {
 	msgTime = msgTimeTrim;
 	var msgSubj = new String;  //creates a string to hold the full message subject
 	msgSubj = header.subject; //puts the value of the message subject in the variable
-	var fromLen = header.from.length;  // gets length of posters name
-	var poster = header.from.substr(0, 10);
-	var subjLen = 40 - poster.length - 5;  //creates a variable to create the width of subject without spilling to a new line
+	var presubjLen = 14;
+	var subjLen = 80 - presubjLen;  //creates a variable to create the width of subject without spilling to a new line
 	var msgSubjTrim = msgSubj.substr(0, subjLen);
 	var headerIndex = header.number;
 	var concatDisplay = '|' + headerIndex + '. ' + msgTime + ' - ' + msgSubjTrim;
-	// if (header.from == user.name) {
-	// 	concatDisplay = "|m|e|@" + msgTime + "|:" + poster + "|:" + msgSubj;
-	// }
-	// else if (header.to == user.name || header.to == user.alias) {
-	// 	concatDisplay = "@|U|-" + msgTime + "|:" + poster + "|:" + msgSubj;
-	// }
-	// else {
-	// 	concatDisplay = "-|--" + msgTime + "|:" + poster + "|:" + msgSubj;
-	// 	//msgTree.addItem(concatDisplay,readMessage,headerIndex);
-	// }
 	msgTree.addItem(concatDisplay, readMessage, headerIndex);
 }
 
