@@ -1,0 +1,13 @@
+{
+  "frameSize": [16, 8],
+  "source": "paperclip_pablo.bin",
+  "animations": {
+    "idle":        { "frames": [0, 1, 2, 3, 4, 5], "speed": 200, "loop": true },
+    "point_right": { "frames": [0, 3, 4],          "speed": 200, "loop": true },
+    "celebrate":   { "frames": [0, 2, 5, 8, 4],    "speed": 150, "loop": true },
+    "shrug":       { "frames": [0, 1, 2],          "speed": 200, "loop": true },
+    "think":       { "frames": [1, 2],             "speed": 200, "loop": true },
+    "nod_yes":     { "frames": [0, 8, 9],           "speed": 150, "loop": true },
+    "shake_no":    { "frames": [5, 6, 7],           "speed": 150, "loop": true }
+  }
+}
