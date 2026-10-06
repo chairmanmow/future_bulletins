@@ -16,6 +16,63 @@ require("smbdefs.js", "MSG_DELETE");
 require("userdefs.js", "UFLAG_G");
 load("frame.js");
 
+var Scene3dMod = null;
+var Scene3dVersion = null;
+try {
+	Scene3dMod = load("/sbbs/mods/load/scene3d.js");
+	Scene3dVersion = Scene3dMod.probe(500);
+} catch (e) {
+	try { log(LOG_WARNING, "flbullet scene3d unavailable: " + e); } catch (_) { }
+}
+
+var depthLayers = null;
+
+/*	The carousel is staged like a little theatre: Clippy owns the glass,
+	modals and headlines come forward, the bulletin rests on a reader card,
+	and the moving marquees sit at the back of the set. Dynamic slide frames
+	carry an explicit _scene3dBand assigned by newSlideFrame(). */
+function initDepth() {
+	if (!Scene3dMod || !Scene3dMod.supportsTextLayers(Scene3dVersion)) return;
+	var layers = new Scene3dMod.TextDepthLayers({
+		spread: 4.0,
+		order: ["glass", "modal", "headline", "bubble", "content", "chrome", "panel", "marquee", "backdrop"],
+		depths: {
+			glass: 0.0,
+			modal: 0.05,
+			headline: 0.12,
+			bubble: 0.21,
+			content: 0.36,
+			chrome: 0.5,
+			panel: 0.68,
+			marquee: 0.9,
+			backdrop: 1.0
+		},
+		bandFor: function (frame) {
+			var node = frame;
+			for (var hops = 0; node && hops < 6; hops++) {
+				if (node._scene3dBand) return node._scene3dBand;
+				if (clippy && node === clippy.pane) return "glass";
+				if (node === bubbleFrame) return "bubble";
+				if (node === statusFrame) return "chrome";
+				if (node === bgFrame) return "marquee";
+				if (node === containerFrame) return "backdrop";
+				try { node = node.parent; } catch (e) { return "glass"; }
+			}
+			return "glass";
+		},
+		log: function (message) {
+			try { log(LOG_INFO, "flbullet " + message); } catch (e) { }
+		}
+	});
+	if (layers.install(typeof Display !== "undefined" ? Display : null)) depthLayers = layers;
+}
+
+function disposeDepth() {
+	if (!depthLayers) return;
+	try { depthLayers.dispose(); } catch (e) { }
+	depthLayers = null;
+}
+
 var tdf = load({}, "tdfonts_lib.js");
 tdf.opt = {}; // tdfonts_lib expects an `opt` object in its scope
 
@@ -367,7 +424,7 @@ function buildRainbowHeadline(subject, yTop) {
 	if (spaced.length <= cols - 8) title = spaced;      // letter-space it if there's room
 	else if (title.length > cols - 4) title = title.substr(0, cols - 4);
 
-	var f = newSlideFrame(1, yTop, cols, 3, BG_BLACK | LIGHTGRAY);
+	var f = newSlideFrame(1, yTop, cols, 3, BG_BLACK | LIGHTGRAY, "headline");
 	var tx = Math.floor((f.width - title.length) / 2);
 	var cells = [];
 	for (var i = 0; i < title.length; i++) {
@@ -894,6 +951,8 @@ if (rows >= 18 && cols >= 60) {
 	}
 }
 
+initDepth();
+
 function clippyReact(anim, bubbleText, holdMs) {
 	if (clippy) {
 		clippy.animator.play(anim);
@@ -943,8 +1002,9 @@ var curPhase = "full";
 var done = false;
 var statusHotspots = []; // {cmd, minx, maxx} on the status row
 
-function newSlideFrame(x, y, w, h, attr) {
+function newSlideFrame(x, y, w, h, attr, depthBand) {
 	var f = new Frame(x, y, w, h, attr, containerFrame);
+	f._scene3dBand = depthBand || "content";
 	f.open();
 	slideFrames.push(f);
 	return f;
@@ -967,7 +1027,7 @@ function buildHeadline(b, yTop, maxH) {
 		var cells = renderCells(b.subject, pick.font);
 		if (cells) {
 			var hx = Math.max(1, Math.floor((cols - cells.width) / 2) + 1);
-			var hf = newSlideFrame(hx, yTop, Math.min(cells.width, cols), cells.height, BG_BLACK | LIGHTGRAY);
+			var hf = newSlideFrame(hx, yTop, Math.min(cells.width, cols), cells.height, BG_BLACK | LIGHTGRAY, "headline");
 			var painted = blitCells(hf, cells, 0, 0);
 			headEffect = new Shimmer(hf, painted);
 			return { height: cells.height };
@@ -986,14 +1046,14 @@ function buildDateLine(b, yTop, maxH) {
 			var cells = renderCells(b.dateBig, pick.font);
 			if (cells) {
 				var dx = Math.max(1, Math.floor((cols - cells.width) / 2) + 1);
-				var df = newSlideFrame(dx, yTop, Math.min(cells.width, cols), cells.height, BG_BLACK | LIGHTGRAY);
+				var df = newSlideFrame(dx, yTop, Math.min(cells.width, cols), cells.height, BG_BLACK | LIGHTGRAY, "chrome");
 				blitCells(df, cells, 0, 0);
 				return cells.height;
 			}
 		}
 	}
 	/* plain date line: bright enough to read against the black backdrop */
-	var lf = newSlideFrame(1, yTop, cols, 1, BG_BLACK | LIGHTGRAY);
+	var lf = newSlideFrame(1, yTop, cols, 1, BG_BLACK | LIGHTGRAY, "chrome");
 	lf.gotoxy(1, 1);
 	lf.center("\1h\1m" + ascii(196) + ascii(196) + ascii(196) + " \1h\1w" + b.dateStr + " \1h\1m" + ascii(196) + ascii(196) + ascii(196) + "\1n");
 	return 1;
@@ -1004,11 +1064,11 @@ function buildBodyBox(b, top, bottom) {
 	if (h < 5) { h = 5; top = Math.max(1, bottom - 4); }
 	var w = Math.min(cols - 4, 78);
 	var x = Math.max(1, Math.floor((cols - w) / 2) + 1);
-	var box = newSlideFrame(x, top, w, h, BG_BLACK | LIGHTGRAY);
+	var box = newSlideFrame(x, top, w, h, BG_BLACK | LIGHTGRAY, "panel");
 	borderAnim = new BorderAnim(box, 110);
 	borderAnim.tick(clockMs(), true);
 
-	bodyInner = newSlideFrame(x + 2, top + 1, w - 4, h - 2, BG_BLACK | LIGHTGRAY);
+	bodyInner = newSlideFrame(x + 2, top + 1, w - 4, h - 2, BG_BLACK | LIGHTGRAY, "content");
 	bodyInner.word_wrap = true;
 	bodyInner.v_scroll = true;
 	bodyInner.putmsg("\1h\1w" + b.subject + "\1n\r\n" +
@@ -1027,7 +1087,7 @@ function buildTitleCard(b) {
 	var y0 = Math.max(2, Math.floor((rows - total) / 2));
 	var head = buildHeadlineAt(b, y0, pick);
 	buildDateLine(b, y0 + head.height + 1, 0);
-	var hintF = newSlideFrame(1, rows - 1, cols, 1, BG_BLACK | LIGHTGRAY);
+	var hintF = newSlideFrame(1, rows - 1, cols, 1, BG_BLACK | LIGHTGRAY, "chrome");
 	hintF.gotoxy(1, 1);
 	hintF.center("\1h\1k" + ascii(175) + " \1n\1cpress a key to read \1h\1k" + ascii(174) + "\1n");
 	return;
@@ -1037,7 +1097,7 @@ function buildTitleCard(b) {
 			var cells = renderCells(b2.subject, pick2.font);
 			if (cells) {
 				var hx = Math.max(1, Math.floor((cols - cells.width) / 2) + 1);
-				var hf = newSlideFrame(hx, yTop, Math.min(cells.width, cols), cells.height, BG_BLACK | LIGHTGRAY);
+				var hf = newSlideFrame(hx, yTop, Math.min(cells.width, cols), cells.height, BG_BLACK | LIGHTGRAY, "headline");
 				var painted = blitCells(hf, cells, 0, 0);
 				headEffect = new Shimmer(hf, painted);
 				return { height: cells.height };
@@ -1218,6 +1278,7 @@ function openModal(title, maxW, maxH) {
 	var mx = Math.floor((cols - w) / 2) + 1;
 	var my = Math.floor((rows - h) / 2) + 1;
 	var modal = new Frame(mx, my, w, h, BG_BLACK | LIGHTGRAY, containerFrame);
+	modal._scene3dBand = "modal";
 	modal.open();
 	var mBorder = new BorderAnim(modal, 0);
 	/* static border for the modal */
@@ -1498,6 +1559,7 @@ try {
 } finally {
 	if (hotspotsAvailable) console.clear_hotspots();
 	try { containerFrame.close(); } catch (e) { }
+	disposeDepth();
 	mb.close();
 	console.attributes = LIGHTGRAY;
 	console.clear();
