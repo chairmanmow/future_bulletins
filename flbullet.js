@@ -421,10 +421,10 @@ Rainbow.prototype.tick = function (now, force) {
 function buildRainbowHeadline(subject, yTop) {
 	var title = subject.toUpperCase();
 	var spaced = title.split("").join(" ");
-	if (spaced.length <= cols - 8) title = spaced;      // letter-space it if there's room
-	else if (title.length > cols - 4) title = title.substr(0, cols - 4);
+	if (spaced.length <= headW - 8) title = spaced;      // letter-space it if there's room
+	else if (title.length > headW - 4) title = title.substr(0, headW - 4);
 
-	var f = newSlideFrame(1, yTop, cols, 3, BG_BLACK | LIGHTGRAY, "headline");
+	var f = newSlideFrame(1, yTop, headW, 3, BG_BLACK | LIGHTGRAY, "headline");
 	var tx = Math.floor((f.width - title.length) / 2);
 	var cells = [];
 	for (var i = 0; i < title.length; i++) {
@@ -877,6 +877,14 @@ if (!console.term_supports(USER_ANSI) || console.screen_rows < 10 || console.scr
 
 loadFontMap();
 
+/*	Measured link speed (shared with the rest of the logon chain): 'full'
+	animates everything, 'lite' freezes the marquees and the reader border and
+	steps the headline and Clippy every LITE_STRIDE-th loop, 'static' draws once and only redraws on keys. */
+var linkTier = "full";
+try { linkTier = load({}, "/sbbs/mods/load/linkspeed.js").tier(); } catch (e) { log(LOG_WARNING, "flbullet: linkspeed failed: " + e); }
+log(LOG_DEBUG, "flbullet: link tier " + linkTier);
+var LITE_STRIDE = 4;
+
 var cols = console.screen_columns;
 var rows = console.screen_rows;
 var twoPhase = (rows < 20 || cols < 60);
@@ -915,8 +923,18 @@ var marquees = [];
 var statusFrame = new Frame(1, rows, cols, 1, BG_BLACK | LIGHTGRAY, containerFrame);
 statusFrame.open();
 
-/* Clippy, bottom-LEFT this time */
+/*	Clippy's spot. Where the reader box leaves the bottom-left corner free
+	(very wide screens) he stands there with a one-line bubble to his right.
+	Otherwise he takes the "stage": a column at the top-right beside the
+	headline, with a wrapping bubble under him. The headline and date are
+	narrowed to headW so they never run under him, and the reader box starts
+	below the stage, so nothing he does ever covers the bulletin. */
+var STAGE_W = 20;        // stage column width (bubble width; Clippy centered over it)
+var STAGE_BUBBLE_H = 5;  // bubble rows on the stage: border + up to 3 wrapped lines (fewer on short screens)
 var clippy = null;       // {pane, animator, w, h, x, y}
+var clippyStaged = false;
+var stageBottom = 0;     // last screen row the stage uses (0 = no stage)
+var headW = cols;        // width the headline and date may use
 var bubbleFrame = null;
 var bubbleOverride = null; // {text, until}
 var clippyRevertAt = 0;
@@ -931,16 +949,34 @@ if (rows >= 18 && cols >= 60) {
 		if (anims.first !== null) {
 			var cw = spriteDef.frameSize[0], ch = spriteDef.frameSize[1];
 			var cx = 2, cy = rows - ch;   // sits just above the status bar
+			var boxX = Math.max(1, Math.floor((cols - Math.min(cols - 4, 78)) / 2) + 1);
+			var stageX = cols - STAGE_W;
+			/* rows left for the bubble once Clippy and a minimum reader box fit */
+			var stageBubbleH = Math.min(STAGE_BUBBLE_H, rows - 1 - BODY_MIN_ROWS - 2 - ch);
+			/* the bottom-left spot needs Clippy and his full 44-column bubble clear of the box */
+			var fitsBeside = boxX - (cx + cw + 1) - 1 >= 44;
+			clippyStaged = !twoPhase && !fitsBeside && stageBubbleH >= 3;
+			if (clippyStaged) {
+				cx = stageX + Math.floor((STAGE_W - cw) / 2);
+				cy = 2;
+				stageBottom = cy + ch + stageBubbleH - 1;
+				headW = stageX - 2;
+			}
 			var pane = new Frame(cx, cy, cw, ch, BG_BLACK | LIGHTGRAY, containerFrame);
 			pane.transparent = true;
 			pane.open();
 			var animator = new SpriteAnimator(pane, spriteData.frames, anims.map, "idle");
 			animator.play(anims.map.idle ? "idle" : anims.first);
 			clippy = { pane: pane, animator: animator, w: cw, h: ch, x: cx, y: cy };
-			/* speech bubble sits to Clippy's right, over scrollable body text */
+			if (clippyStaged) {
+				bubbleFrame = new Frame(stageX, cy + ch, STAGE_W, stageBubbleH, BG_BLACK | LIGHTGRAY, containerFrame);
+				bubbleFrame.transparent = true;
+				bubbleFrame.open();
+			}
+			/* speech bubble sits to Clippy's right */
 			var bx = cx + cw + 1;
-			if (cols - bx >= 20) {
-				bubbleFrame = new Frame(bx, cy, Math.min(44, cols - bx - 1), 3, BG_BLACK | LIGHTGRAY, containerFrame);
+			if (!clippyStaged && cols - bx >= 20) {
+				bubbleFrame = new Frame(bx, cy, Math.min(44, (fitsBeside ? boxX : cols) - bx - 1), 3, BG_BLACK | LIGHTGRAY, containerFrame);
 				bubbleFrame.transparent = true;
 				bubbleFrame.open();
 			}
@@ -953,6 +989,41 @@ if (rows >= 18 && cols >= 60) {
 
 initDepth();
 
+/*	Safety net for layouts without the stage (bottom-left Clippy, short
+	screens, the body screen of two-phase slides): when bulletin text is
+	under Clippy or his bubble they step aside, and come back once the
+	visible text clears their spot. */
+function clippyCoversText() {
+	if (!bodyInner) return false;
+	var left = clippy.x;
+	var right = bubbleFrame ? bubbleFrame.x + bubbleFrame.width - 1 : clippy.x + clippy.w - 1;
+	var x0 = Math.max(left, bodyInner.x) - bodyInner.x;
+	var x1 = Math.min(right, bodyInner.x + bodyInner.width - 1) - bodyInner.x;
+	var y0 = Math.max(clippy.y, bodyInner.y) - bodyInner.y;
+	var y1 = Math.min(clippy.y + clippy.h - 1, bodyInner.y + bodyInner.height - 1) - bodyInner.y;
+	for (var y = y0; y <= y1; y++)
+		for (var x = x0; x <= x1; x++) {
+			var d = bodyInner.getData(x, y, true);
+			if (d.ch && d.ch !== " ") return true;
+		}
+	return false;
+}
+
+/* returns true when Clippy's visibility changed */
+function placeClippy() {
+	if (!clippy) return false;
+	var show = !clippyCoversText();
+	var changed = show !== clippy.pane.is_open;
+	if (show) {
+		if (clippy.pane.is_open) clippy.pane.top(); else clippy.pane.open();
+		if (bubbleFrame) { if (bubbleFrame.is_open) bubbleFrame.top(); else bubbleFrame.open(); }
+	} else {
+		clippy.pane.close();
+		if (bubbleFrame) bubbleFrame.close();
+	}
+	return changed;
+}
+
 function clippyReact(anim, bubbleText, holdMs) {
 	if (clippy) {
 		clippy.animator.play(anim);
@@ -962,8 +1033,61 @@ function clippyReact(anim, bubbleText, holdMs) {
 		bubbleOverride = { text: bubbleText, until: clockMs() + (holdMs || 2000) + 1500 };
 }
 
+/* greedy word wrap; words longer than the width are cut */
+function wrapWords(text, width, maxLines) {
+	var words = text.split(" ");
+	var lines = [];
+	var line = "";
+	for (var i = 0; i < words.length; i++) {
+		var w = words[i].substr(0, width);
+		if (!line.length) line = w;
+		else if (line.length + 1 + w.length <= width) line += " " + w;
+		else { lines.push(line); line = w; }
+	}
+	if (line.length) lines.push(line);
+	return lines.slice(0, maxLines);
+}
+
+/* stage bubble under Clippy: sized to its text, tail opening up at him */
+function drawStagedBubble(text) {
+	var bw = bubbleFrame.width, bh = bubbleFrame.height;
+	for (var cy = 0; cy < bh; cy++)
+		for (var cx = 0; cx < bw; cx++)
+			bubbleFrame.clearData(cx, cy, false);
+	if (!text || !text.length) return;
+	var lines = wrapWords(text, bw - 4, bh - 2);
+	var innerW = 0;
+	for (var i = 0; i < lines.length; i++) innerW = Math.max(innerW, lines[i].length);
+	var w = innerW + 4, h = lines.length + 2;
+	var x0 = Math.floor((bw - w) / 2);
+	var bAttr = DARKGRAY, tAttr = CYAN;
+	for (var y = 0; y < h; y++)
+		for (var x = 0; x < w; x++) {
+			var ch = " ", attr = tAttr;
+			if (y === 0 || y === h - 1) {
+				attr = bAttr;
+				if (x === 0) ch = ascii(y === 0 ? 218 : 192);
+				else if (x === w - 1) ch = ascii(y === 0 ? 191 : 217);
+				else ch = ascii(196);
+			} else if (x === 0 || x === w - 1) {
+				ch = ascii(179); attr = bAttr;
+			} else if (x >= 2 && x - 2 < lines[y - 1].length) {
+				ch = lines[y - 1].charAt(x - 2);
+			}
+			bubbleFrame.setData(x0 + x, y, ch, attr);
+		}
+	/* tail: a gap in the top border under Clippy's middle */
+	var tx = clippy.x + Math.floor(clippy.w / 2) - bubbleFrame.x;
+	if (tx - 1 > x0 && tx + 1 < x0 + w - 1) {
+		bubbleFrame.setData(tx - 1, 0, ascii(217), bAttr);
+		bubbleFrame.setData(tx, 0, " ", tAttr);
+		bubbleFrame.setData(tx + 1, 0, ascii(192), bAttr);
+	}
+}
+
 function drawBubble(text) {
 	if (!bubbleFrame) return;
+	if (clippyStaged) { drawStagedBubble(text); return; }
 	var bw = bubbleFrame.width;
 	for (var y = 0; y < 3; y++)
 		for (var x = 0; x < bw; x++)
@@ -1022,12 +1146,12 @@ function closeSlideFrames() {
 }
 
 function buildHeadline(b, yTop, maxH) {
-	var pick = pickFont(b.subject, cols - 2, Math.min(maxH, MAX_HEADLINE_ROWS), b.number * 97 + 13);
+	var pick = pickFont(b.subject, headW - 2, Math.min(maxH, MAX_HEADLINE_ROWS), b.number * 97 + 13);
 	if (pick) {
 		var cells = renderCells(b.subject, pick.font);
 		if (cells) {
-			var hx = Math.max(1, Math.floor((cols - cells.width) / 2) + 1);
-			var hf = newSlideFrame(hx, yTop, Math.min(cells.width, cols), cells.height, BG_BLACK | LIGHTGRAY, "headline");
+			var hx = Math.max(1, Math.floor((headW - cells.width) / 2) + 1);
+			var hf = newSlideFrame(hx, yTop, Math.min(cells.width, headW), cells.height, BG_BLACK | LIGHTGRAY, "headline");
 			var painted = blitCells(hf, cells, 0, 0);
 			headEffect = new Shimmer(hf, painted);
 			return { height: cells.height };
@@ -1041,19 +1165,19 @@ function buildHeadline(b, yTop, maxH) {
 
 function buildDateLine(b, yTop, maxH) {
 	if (maxH >= 4) {
-		var pick = pickFont(b.dateBig, cols - 2, Math.min(6, maxH), b.number * 53 + 7);
+		var pick = pickFont(b.dateBig, headW - 2, Math.min(6, maxH), b.number * 53 + 7);
 		if (pick) {
 			var cells = renderCells(b.dateBig, pick.font);
 			if (cells) {
-				var dx = Math.max(1, Math.floor((cols - cells.width) / 2) + 1);
-				var df = newSlideFrame(dx, yTop, Math.min(cells.width, cols), cells.height, BG_BLACK | LIGHTGRAY, "chrome");
+				var dx = Math.max(1, Math.floor((headW - cells.width) / 2) + 1);
+				var df = newSlideFrame(dx, yTop, Math.min(cells.width, headW), cells.height, BG_BLACK | LIGHTGRAY, "chrome");
 				blitCells(df, cells, 0, 0);
 				return cells.height;
 			}
 		}
 	}
 	/* plain date line: bright enough to read against the black backdrop */
-	var lf = newSlideFrame(1, yTop, cols, 1, BG_BLACK | LIGHTGRAY, "chrome");
+	var lf = newSlideFrame(1, yTop, headW, 1, BG_BLACK | LIGHTGRAY, "chrome");
 	lf.gotoxy(1, 1);
 	lf.center("\1h\1m" + ascii(196) + ascii(196) + ascii(196) + " \1h\1w" + b.dateStr + " \1h\1m" + ascii(196) + ascii(196) + ascii(196) + "\1n");
 	return 1;
@@ -1173,7 +1297,7 @@ function registerHotspots() {
 		var hs = statusHotspots[i];
 		console.add_hotspot(hs.cmd, true, hs.minx, hs.maxx, rows - 1);
 	}
-	if (clippy) {
+	if (clippy && clippy.pane.is_open) {
 		for (var cy = clippy.y - 1; cy < clippy.y - 1 + clippy.h; cy++)
 			console.add_hotspot("c", true, clippy.x, clippy.x + clippy.w - 1, cy);
 	}
@@ -1225,13 +1349,12 @@ function renderSlide(idx, phase) {
 		var dateY = 2 + head.height;
 		var dateMaxH = rows - 12 - head.height;
 		var dateH = buildDateLine(b, dateY + 1, dateMaxH);
-		buildBodyBox(b, dateY + 1 + dateH + 1, rows - 1);
+		buildBodyBox(b, Math.max(dateY + 1 + dateH + 1, stageBottom + 1), rows - 1);
 		log(LOG_DEBUG, format("flbullet: slide %d headH=%d dateY=%d dateH=%d boxTop=%d",
 			idx, head.height, dateY + 1, dateH, dateY + 1 + dateH + 1));
 	}
 
-	if (clippy) clippy.pane.top();
-	if (bubbleFrame) bubbleFrame.top();
+	placeClippy();
 	drawStatus();
 	registerHotspots();
 	tipNextAt = 0; // refresh bubble text for the new slide
@@ -1248,6 +1371,7 @@ function scrollBody(dy) {
 	if (target === off) return;
 	bodyInner.scrollTo(0, target);
 	drawStatus();
+	if (placeClippy()) registerHotspots();
 }
 
 function advance() {
@@ -1534,8 +1658,11 @@ function handleKey(key) {
 try {
 	/* logon mode starts at the first (oldest) unread; menu mode too */
 	renderSlide(0);
+	if (linkTier !== "full") /* marquees are drawn once and stay put */
+		for (var mi0 = 0; mi0 < marquees.length; mi0++) marquees[mi0].tick(clockMs());
 	containerFrame.draw();
 
+	var loops = 0;
 	while (!done && bbs.online) {
 		var key = console.inkey(K_NONE, 40);
 		if (console.aborted) { console.aborted = false; break; }
@@ -1543,15 +1670,18 @@ try {
 		if (done) break;
 
 		var now = clockMs();
-		for (var mi = 0; mi < marquees.length; mi++) marquees[mi].tick(now);
-		if (borderAnim) borderAnim.tick(now);
-		if (headEffect) headEffect.tick(now);
+		var animateNow = linkTier === "full" || (linkTier === "lite" && (loops % LITE_STRIDE) === 0);
+		loops++;
+		if (linkTier === "full")
+			for (var mi = 0; mi < marquees.length; mi++) marquees[mi].tick(now);
+		if (linkTier === "full" && borderAnim) borderAnim.tick(now);
+		if (animateNow && headEffect) headEffect.tick(now);
 		if (clippy) {
 			if (clippyRevertAt && now >= clippyRevertAt) {
 				clippyRevertAt = 0;
 				clippy.animator.ensure("idle");
 			}
-			clippy.animator.step(now);
+			if (animateNow) clippy.animator.step(now);
 		}
 		updateBubble(now);
 		containerFrame.cycle();

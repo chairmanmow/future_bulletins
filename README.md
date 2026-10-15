@@ -6,6 +6,19 @@ shimmer sweep, dates in TDF where the terminal is tall enough, the message
 body in a box whose border colors travel clockwise, scrolling TDF marquee
 bands of the BBS name/location/user greeting in the background, and Clippy
 (borrowed from future_signup) with a speech bubble in the bottom-left.
+Clippy never covers the bulletin. On most screens (anything narrower than
+the reader box plus his full bubble, down to 80x23) he stands on a "stage"
+at the top-right beside the headline, with a wrapping speech bubble under
+him; the headline and date are fitted to the width left of the stage and
+the reader box starts below it. Only on very wide screens does he keep the
+bottom-left spot with a one-line bubble beside him. On layouts with no room
+for either (two-phase slides, 20-22 rows) he steps aside whenever text is
+under him.
+
+Animation follows the caller's measured link speed
+(`/sbbs/mods/load/linkspeed.js`): full animates everything; lite freezes the
+marquees and the reader border and steps the headline and Clippy at a quarter
+rate; static draws once and only redraws on keypresses.
 
 ## Modes
 
